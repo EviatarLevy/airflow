@@ -1,4 +1,5 @@
 # dags/RAG_DAG.py
+import os
 from datetime import datetime
 from airflow import DAG
 from airflow.operators.python import PythonVirtualenvOperator
