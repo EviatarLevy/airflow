@@ -1,26 +1,30 @@
-# dags/RAG_DAG.py
-import os
+# dags/RAG-DAG.py
 from datetime import datetime
 from airflow import DAG
 from airflow.operators.python import PythonVirtualenvOperator
+import os
 
+# Path that exists inside the Airflow pod (repo is checked out here)
 DAGS_ROOT = "/usr/local/airflow/dags/gitdags"
-DATA_PATH = os.path.join(DAGS_ROOT, "dags", "data")
+DEFAULT_DATA_PATH = os.path.join(DAGS_ROOT, "dags", "data")  # put a small demo dataset here
 
-def _run_pipeline():
-    # Everything below runs INSIDE a temporary virtualenv
+def _run_pipeline(data_path=None):
+    # Everything below runs INSIDE a fresh virtualenv
     import os, requests
     from langchain_community.document_loaders import DirectoryLoader, UnstructuredFileLoader
     from langchain.text_splitter import RecursiveCharacterTextSplitter
 
+    # read secrets from env (set these on the worker)
     EMBED_ENDPOINT = "https://nvidia-nv-embedqa-e5-v5-predictor-eviatar-hpe-com-a98a1262.ingress.pcai.hpelabs.co.il/v1"
     EMBED_TOKEN = "eyJhbGciOiJSUzI1NiIsImtpZCI6Inl0YnRpQXBOM3E1enkwRnNHUF82bUZBclFRTWx6T1RSZ0xpNkJzUExPWmcifQ.eyJhdWQiOlsiYXBpIiwiaXN0aW8tY2EiXSwiZXhwIjoxNzgzODY3MzkwLCJpYXQiOjE3NTc5NDczOTAsImlzcyI6Imh0dHBzOi8va3ViZXJuZXRlcy5kZWZhdWx0LnN2Yy5jbHVzdGVyLmxvY2FsIiwianRpIjoiMGM3NTBiZTAtMzZiZC00NzY1LWI1OGMtMjNmNmNlN2EyODM2Iiwia3ViZXJuZXRlcy5pbyI6eyJuYW1lc3BhY2UiOiJ1aSIsInNlcnZpY2VhY2NvdW50Ijp7Im5hbWUiOiJpc3ZjLWVwLTE3NTc5NDczOTAyODciLCJ1aWQiOiI2ODAzOTk5ZS0xMDY3LTRjZTktOWJhZC0yNDhkNjk2ZTMwYzIifX0sIm5iZiI6MTc1Nzk0NzM5MCwic3ViIjoic3lzdGVtOnNlcnZpY2VhY2NvdW50OnVpOmlzdmMtZXAtMTc1Nzk0NzM5MDI4NyJ9.BNjKIP1BM7r0UvqLDM_qV_o8jWrDg7S8u_Y6gVIcMYc1gznDqQrSaJndQMt1NED9UBGZk-0w8ZbGgicyrrTpqAHnUtThF4KNpYqKKWnDLZHrNZLVY7Z1ZxgiOUCvCV-lPwBsXKZpNoefxiISZGTDj6ec1HnX1AxCytPWsN9lf4kjIWrNHkRwTLIoeLtysGc0hQrwxbm-F0Z-SnZ3ZMfjcvUchuMyWObhiP2gM02PXBvbu5ttWje1J_WOEU5ov1UJRsWMNH3hPdAgn2kSR85P5s32bWm1fKyW43-Fkmy-V-ssiUYXjPZocaVlMIBeUIssI2espJtKVWDKtClOJ00i2g"
     MODEL = "nvidia/nv-embedqa-e5-v5"
 
+    if not data_path:
+        data_path = DEFAULT_DATA_PATH  # fallback, though op_kwargs passes it
+
     def load_documents(path):
         return DirectoryLoader(
-            path,
-            glob="**/*.*",
+            path, glob="**/*.*",
             loader_cls=UnstructuredFileLoader,
             loader_kwargs={"languages": ["eng", "heb"]},
             silent_errors=True,
@@ -42,7 +46,7 @@ def _run_pipeline():
                 url,
                 headers=headers,
                 json={"model": MODEL, "input": batch, "input_type": "passage"},
-                verify=False,  # internal CA in your env
+                verify=False,
                 timeout=120,
             )
             r.raise_for_status()
@@ -50,7 +54,7 @@ def _run_pipeline():
             print(f"✅ Embedded {i+1}-{i+len(batch)}")
         return all_vecs
 
-    docs = load_documents(DATA_PATH)
+    docs = load_documents(data_path)
     chunks = chunk_text(docs)
     vecs = embed([c.page_content for c in chunks])
     print(f"Done: {len(docs)} docs → {len(chunks)} chunks → {len(vecs)} vectors")
@@ -64,11 +68,7 @@ with DAG(
     run = PythonVirtualenvOperator(
         task_id="run_embedding_pipeline",
         python_callable=_run_pipeline,
-        requirements=[
-            "langchain",
-            "langchain-community",
-            "unstructured",
-            "requests",
-        ],
+        op_kwargs={"data_path": DEFAULT_DATA_PATH},  # ✅ pass it into the venv
+        requirements=["langchain", "langchain-community", "unstructured", "requests"],
         system_site_packages=False,
     )
