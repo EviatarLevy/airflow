@@ -7,3 +7,5 @@ github token.txt
 
 # ignore notebook checkpoints
 dags/.ipynb_checkpoints/
+
+dags/.ipynb_checkpoints/
